@@ -5,6 +5,7 @@ jest.mock("dotenv", () => ({
 // Creamos mocks para las funciones de Prisma
 const mockFindUnique = jest.fn();
 const mockCreate = jest.fn();
+const mockUpdate = jest.fn(); // Para futuros tests que requieran actualización
 
 // Mock de PrismaClient
 jest.mock("@prisma/client", () => ({
@@ -12,12 +13,13 @@ jest.mock("@prisma/client", () => ({
     users: {
       findUnique: mockFindUnique,
       create: mockCreate,
+      update: mockUpdate,
     },
   })),
 }));
 
-// Mock de bcrypt
-jest.mock("bcrypt", () => ({
+// Mock de bcryptjs
+jest.mock("bcryptjs", () => ({
   hash: jest.fn(),
   compare: jest.fn(),
 }));
@@ -28,29 +30,33 @@ jest.mock("jsonwebtoken", () => ({
   compare: jest.fn(),
 }));
 
-// Mock para generar el token en el momento de autenticación
-jest.mock("jsonwebtoken", () => ({
-  sign: jest.fn().mockReturnValue("test_token"),
+// Mock de nodemailer para evitar conexiones reales a SMTP
+jest.mock("nodemailer", () => ({
+  createTransport: jest.fn(() => ({
+    sendMail: jest.fn().mockResolvedValue({ response: "OK" }),
+  })),
 }));
 
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { signUp, signIn } = require("../../../src/controllers/AuthController");
-const { signUp, signIn } = require("../../../src/controllers/AuthController");
+const {
+  signUp,
+  signIn,
+  verifyCode,
+  resendVerificationCode,
+} = require("../../../src/controllers/AuthController");
 
-// Mock que omite algunos de los console.log del AuthController
+// Omite algunos console.log del controlador
 jest.spyOn(console, "log").mockImplementation(() => {});
+jest.spyOn(console, "error").mockImplementation(() => {});
 
 describe("SignUp Controller Method", () => {
   let req;
   let res;
 
-  // Reiniciar mocks antes de cada prueba
   beforeEach(() => {
     jest.clearAllMocks();
-    req = {
-      body: {},
-    };
+    req = { body: {} };
     res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn(),
@@ -58,12 +64,10 @@ describe("SignUp Controller Method", () => {
   });
 
   test("Return message all required fields", async () => {
-    // Pasamos el request body de la solicitud
     req.body = {
       fullname: "User Test",
       // email y current_password no se enviaron
     };
-    // Ejecutamos la prueba
     await signUp(req, res);
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
@@ -91,7 +95,7 @@ describe("SignUp Controller Method", () => {
     await signUp(req, res);
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
-      message: "Password must be at least 6 characteres long",
+      message: "Password must be at least 6 characters long",
     });
   });
 
@@ -102,7 +106,7 @@ describe("SignUp Controller Method", () => {
       current_password: "test123",
     };
 
-    // Configuramos el comportamiento del mock
+    // Simulamos que ya existe el usuario
     mockFindUnique.mockResolvedValue({
       id: 1,
       email: "test1@test.com",
@@ -115,7 +119,7 @@ describe("SignUp Controller Method", () => {
     });
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
-      message: "Email allready registered",
+      message: "Email already registered",
     });
   });
 
@@ -126,14 +130,14 @@ describe("SignUp Controller Method", () => {
       current_password: "test123",
     };
 
-    // Usuario no existe
+    // Simulamos que el usuario no existe
     mockFindUnique.mockResolvedValue(null);
 
-    // Configurar mock para el hash
+    // Configuramos el mock para el hash de la contraseña
     const hashedPassword = "hashed_password";
     bcrypt.hash.mockResolvedValue(hashedPassword);
 
-    // Configurar mock para la creación de usuario
+    // Configuramos el mock para la creación del usuario
     const createdUser = {
       id: 1,
       fullname: "User Test",
@@ -148,16 +152,21 @@ describe("SignUp Controller Method", () => {
     });
     expect(bcrypt.hash).toHaveBeenCalledWith("test123", 10);
     expect(mockCreate).toHaveBeenCalledWith({
-      data: {
+      data: expect.objectContaining({
         fullname: "User Test",
         email: "test@test.com",
         current_password: hashedPassword,
-      },
+        // Se asume que el controlador agrega estos campos:
+        status: "PENDING",
+        verificationCode: expect.any(String),
+        verificationCodeExpires: expect.any(Date),
+      }),
     });
     expect(res.status).toHaveBeenCalledWith(201);
     expect(res.json).toHaveBeenCalledWith({
-      message: "User created successfull",
-      user: createdUser,
+      message: "User created successfully",
+      userId: createdUser.id,
+      email: createdUser.email,
     });
   });
 });
@@ -168,9 +177,7 @@ describe("SignIn Controller Method", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    req = {
-      body: {},
-    };
+    req = { body: {} };
     res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn(),
@@ -179,9 +186,7 @@ describe("SignIn Controller Method", () => {
 
   test("Should return error when email and password are not provided", async () => {
     req.body = {};
-
     await signIn(req, res);
-
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
       message: "Both fields are required",
@@ -193,9 +198,7 @@ describe("SignIn Controller Method", () => {
       email: "invalidEmail",
       current_password: "password123",
     };
-
     await signIn(req, res);
-
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
       message: "Invalid email format",
@@ -270,7 +273,7 @@ describe("SignIn Controller Method", () => {
     // Simulamos que la contraseña coincide
     jest.spyOn(bcrypt, "compare").mockResolvedValue(true);
 
-    // Simulamos el entorno para JWT
+    // Configuramos el entorno para JWT
     process.env.JWT_SECRET = "test_secret";
 
     await signIn(req, res);
@@ -283,13 +286,13 @@ describe("SignIn Controller Method", () => {
       "hashedCorrectPassword"
     );
     expect(jwt.sign).toHaveBeenCalledWith(
-      { id: mockUserId },
+      { id: mockUserId, email: "test@test.com" },
       process.env.JWT_SECRET,
       { expiresIn: "2h" }
     );
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
-      message: "Login successfull",
+      message: "Login successful",
       token: "test_token",
     });
   });
@@ -306,8 +309,249 @@ describe("SignIn Controller Method", () => {
     await signIn(req, res);
 
     expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Login failed",
+      })
+    );
+  });
+});
+
+// Test para el método verifyCode
+
+describe("verifyCode Controller Method", () => {
+  let req;
+  let res;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { body: {} };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+  });
+
+  test("Should return error if email or verification code is missing", async () => {
+    req.body = { email: "test@test.com" }; // Falta el código
+    await verifyCode(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
-      message: "Login failed",
+      message: "Email and verification code are required",
+    });
+
+    jest.clearAllMocks();
+    req.body = { code: "123456" }; // Falta el email
+    await verifyCode(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Email and verification code are required",
+    });
+  });
+
+  test("Should return error if user is not found", async () => {
+    req.body = { email: "notfound@test.com", code: "123456" };
+    mockFindUnique.mockResolvedValue(null);
+    await verifyCode(req, res);
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { email: "notfound@test.com" },
+    });
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({ message: "User not found" });
+  });
+
+  test("Should return error if user is already verified", async () => {
+    req.body = { email: "test@test.com", code: "123456" };
+    const user = { id: 1, email: "test@test.com", status: "ACTIVE" };
+    mockFindUnique.mockResolvedValue(user);
+    await verifyCode(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "User is already verified",
+    });
+  });
+
+  test("Should return error if verification code has expired", async () => {
+    req.body = { email: "test@test.com", code: "123456" };
+    const pastTime = new Date(Date.now() - 10 * 60000); // 10 minutos en el pasado
+    const user = {
+      id: 1,
+      email: "test@test.com",
+      status: "PENDING",
+      verificationCode: "123456",
+      verificationCodeExpires: pastTime,
+    };
+    mockFindUnique.mockResolvedValue(user);
+    await verifyCode(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Verification code has expired. Please request a new one.",
+    });
+  });
+
+  test("Should return error if verification code is invalid", async () => {
+    req.body = { email: "test@test.com", code: "654321" };
+    const futureTime = new Date(Date.now() + 10 * 60000); // 10 minutos en el futuro
+    const user = {
+      id: 1,
+      email: "test@test.com",
+      status: "PENDING",
+      verificationCode: "123456",
+      verificationCodeExpires: futureTime,
+    };
+    mockFindUnique.mockResolvedValue(user);
+    await verifyCode(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Invalid verification code",
+    });
+  });
+
+  test("Should verify account successfully and return token", async () => {
+    req.body = { email: "test@test.com", code: "123456" };
+    const futureTime = new Date(Date.now() + 10 * 60000);
+    const user = {
+      id: 1,
+      email: "test@test.com",
+      status: "PENDING",
+      verificationCode: "123456",
+      verificationCodeExpires: futureTime,
+    };
+    mockFindUnique.mockResolvedValue(user);
+    mockUpdate.mockResolvedValue({
+      ...user,
+      status: "ACTIVE",
+      verificationCode: null,
+      verificationCodeExpires: null,
+    });
+    await verifyCode(req, res);
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { email: "test@test.com" },
+    });
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: user.id },
+      data: {
+        status: "ACTIVE",
+        verificationCode: null,
+        verificationCodeExpires: null,
+      },
+    });
+    expect(jwt.sign).toHaveBeenCalledWith(
+      { id: user.id },
+      process.env.JWT_SECRET,
+      { expiresIn: "2h" }
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Account verified successfully",
+      token: "test_token",
+    });
+  });
+});
+
+describe("resendVerificationCode Controller Method", () => {
+  let req;
+  let res;
+  beforeEach(() => {
+    jest.clearAllMocks();
+    req = { body: {} };
+    res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+  });
+
+  test("Should return error if email is not provided", async () => {
+    req.body = {};
+    await resendVerificationCode(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({ message: "Email is required" });
+  });
+
+  test("Should return error if user is not found", async () => {
+    req.body = { email: "notfound@test.com" };
+    mockFindUnique.mockResolvedValue(null);
+    await resendVerificationCode(req, res);
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { email: "notfound@test.com" },
+    });
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({ message: "User not found" });
+  });
+
+  test("Should return error if user is already verified", async () => {
+    req.body = { email: "test@test.com" };
+    const user = {
+      id: 1,
+      email: "test@test.com",
+      fullname: "Test User",
+      status: "ACTIVE",
+    };
+    mockFindUnique.mockResolvedValue(user);
+    await resendVerificationCode(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "User is already verified",
+    });
+  });
+
+  test("Should resend verification code successfully", async () => {
+    req.body = { email: "test@test.com" };
+    const user = {
+      id: 1,
+      email: "test@test.com",
+      fullname: "Test User",
+      status: "PENDING",
+    };
+    mockFindUnique.mockResolvedValue(user);
+    mockUpdate.mockResolvedValue({
+      ...user,
+      verificationCode: "654321",
+      verificationCodeExpires: new Date(Date.now() + 15 * 60000),
+    });
+    await resendVerificationCode(req, res);
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { email: "test@test.com" },
+    });
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: user.id },
+      data: expect.objectContaining({
+        verificationCode: expect.any(String),
+        verificationCodeExpires: expect.any(Date),
+      }),
+    });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Verification code sent successfully. Please check your email.",
+    });
+  });
+
+  test("Should return error if sending verification email fails", async () => {
+    // Para simular el fallo en el envío de email, reseteamos los módulos para forzar un nuevo mock en nodemailer.
+    jest.resetModules();
+    // Reconfiguramos el mock de nodemailer para que sendMail rechace.
+    jest.doMock("nodemailer", () => ({
+      createTransport: jest.fn(() => ({
+        sendMail: jest.fn().mockRejectedValue(new Error("SMTP error")),
+      })),
+    }));
+    // Re-importamos el controlador (esto forzará que se use el nuevo mock de nodemailer)
+    const {
+      resendVerificationCode,
+    } = require("../../../src/controllers/AuthController");
+
+    req.body = { email: "test@test.com" };
+    const user = {
+      id: 1,
+      email: "test@test.com",
+      fullname: "Test User",
+      status: "PENDING",
+    };
+    // Usamos los mocks de Prisma ya definidos previamente
+    mockFindUnique.mockResolvedValue(user);
+    mockUpdate.mockResolvedValue({
+      ...user,
+      verificationCode: "654321",
+      verificationCodeExpires: new Date(Date.now() + 15 * 60000),
+    });
+
+    await resendVerificationCode(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Failed to send verification email. Please try again later.",
     });
   });
 });
