@@ -22,8 +22,8 @@ model Users {
   status                  Status    @default(PENDING)
   verificationCode        String?
   verificationCodeExpires DateTime?
-  twoFactorCode           String?       // Código temporal enviado por SMS
-  twoFactorCodeExpires    DateTime?     // Expiración del código
+  twoFactorCode           String?       
+  twoFactorCodeExpires    DateTime?     
   isTwoFactorVerified     Boolean   @default(false)
   createdAt               DateTime  @default(now())
   updatedAt               DateTime  @updatedAt
