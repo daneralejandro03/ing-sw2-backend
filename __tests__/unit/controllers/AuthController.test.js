@@ -24,7 +24,7 @@ jest.mock("bcryptjs", () => ({
   compare: jest.fn(),
 }));
 
-// Mock para generar el token en el momento de autenticación
+// Mock para generar el token en el momento de autenticación (aunque en signIn no se usa para retornar token)
 jest.mock("jsonwebtoken", () => ({
   sign: jest.fn().mockReturnValue("test_token"),
   compare: jest.fn(),
@@ -36,6 +36,24 @@ jest.mock("nodemailer", () => ({
     sendMail: jest.fn().mockResolvedValue({ response: "OK" }),
   })),
 }));
+
+// >>> NUEVO: Mock de twilio para simular el envío de SMS sin llamar a la API real.
+jest.mock("twilio", () => {
+  return jest.fn(() => {
+    return {
+      messages: {
+        create: jest.fn().mockResolvedValue({}), // Simula que el SMS se envía sin error.
+      },
+    };
+  });
+});
+
+// Configuramos variables de entorno dummy para Twilio (y JWT)
+process.env.TWILIO_SID = "dummy_sid";
+process.env.TWILIO_AUTH_TOKEN = "dummy_token";
+process.env.TWILIO_FROM = "dummy_from";
+process.env.TWILIO_TO = "dummy_to";
+process.env.JWT_SECRET = "test_secret";
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -256,7 +274,8 @@ describe("SignIn Controller Method", () => {
     });
   });
 
-  test("Should sign in user successfully and return token", async () => {
+  // MODIFICADO: Ahora se espera que se envíe el código 2FA y retorne el mensaje "2FA code sent"
+  test("Should sign in user successfully and send 2FA code", async () => {
     const mockUserId = 1;
     req.body = {
       email: "test@test.com",
@@ -273,9 +292,6 @@ describe("SignIn Controller Method", () => {
     // Simulamos que la contraseña coincide
     jest.spyOn(bcrypt, "compare").mockResolvedValue(true);
 
-    // Configuramos el entorno para JWT
-    process.env.JWT_SECRET = "test_secret";
-
     await signIn(req, res);
 
     expect(mockFindUnique).toHaveBeenCalledWith({
@@ -285,15 +301,10 @@ describe("SignIn Controller Method", () => {
       "correctpassword",
       "hashedCorrectPassword"
     );
-    expect(jwt.sign).toHaveBeenCalledWith(
-      { id: mockUserId, email: "test@test.com" },
-      process.env.JWT_SECRET,
-      { expiresIn: "2h" }
-    );
+    // Se espera que se actualice el usuario para 2FA y, luego, se envíe un mensaje de éxito.
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith({
-      message: "Login successful",
-      token: "test_token",
+      message: "2FA code sent",
     });
   });
 
@@ -316,8 +327,6 @@ describe("SignIn Controller Method", () => {
     );
   });
 });
-
-// Test para el método verifyCode
 
 describe("verifyCode Controller Method", () => {
   let req;
