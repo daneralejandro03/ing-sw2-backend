@@ -36,3 +36,19 @@ enum Status {
   INACTIVE
   PENDING
 }
+
+model Department {
+  id                 String      @id @default(auto()) @map("_id") @db.ObjectId
+  region             String
+  codigoDaneDepto    String      @unique
+  nombre             String
+  municipios         Municipio[] 
+}
+
+model Municipio {
+  id                 String      @id @default(auto()) @map("_id") @db.ObjectId
+  codigoDane         String      @unique
+  nombre             String
+  departamento       Department  @relation(fields: [departamentoId], references: [id])
+  departamentoId     String      @db.ObjectId
+}
