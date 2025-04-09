@@ -121,7 +121,9 @@ async function getAllMunicipios(req, res) {
 
 async function getAllDepartamentos(req, res) {
   try {
-    const departamentos = await prisma.department.findMany();
+    const departamentos = await prisma.department.findMany({
+      include: { municipios: true },
+    });
     res.json(departamentos);
   } catch (err) {
     res.status(500).json({ error: "Error al leer datos" });
