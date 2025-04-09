@@ -108,16 +108,28 @@ async function uploadCsv(req, res) {
     });
 }
 
+async function getAllMunicipios(req, res) {
+  try {
+    const municipios = await prisma.municipio.findMany({
+      include: { departamento: true },
+    });
+    res.json(municipios);
+  } catch (err) {
+    res.status(500).json({ error: "Error al leer datos" });
+  }
+}
+
+async function getAllDepartamentos(req, res) {
+  try {
+    const departamentos = await prisma.department.findMany();
+    res.json(departamentos);
+  } catch (err) {
+    res.status(500).json({ error: "Error al leer datos" });
+  }
+}
+
 module.exports = {
   uploadCsv,
-  getAllMunicipios: async (req, res) => {
-    try {
-      const municipios = await prisma.municipio.findMany({
-        include: { departamento: true },
-      });
-      res.json(municipios);
-    } catch (err) {
-      res.status(500).json({ error: "Error al leer datos" });
-    }
-  },
+  getAllMunicipios,
+  getAllDepartamentos,
 };

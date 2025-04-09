@@ -7,7 +7,7 @@ const nodemailer = require("nodemailer");
 
 // Configuración del transporte de correo electrónico
 const transporter = nodemailer.createTransport({
-  host: "smtp.ucaldas.edu.co",
+  host: "smtp.gmail.com",
   port: 465,
   secure: true, // use SSL
   auth: {

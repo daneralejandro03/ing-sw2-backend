@@ -18,7 +18,7 @@ model Users {
   fullname                String
   email                   String    @unique
   current_password        String
-  role                    Role      @default(EDITOR)
+  role                    Role      @default(SUPERADMIN)
   status                  Status    @default(PENDING)
   verificationCode        String?
   verificationCodeExpires DateTime?
