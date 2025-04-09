@@ -327,10 +327,14 @@ const sendSMS = async (code, user) => {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const client = require("twilio")(accountSid, authToken);
 
+  // Obtén los números desde las variables de entorno
+  const fromNumber = process.env.TWILIO_FROM;
+  const toNumber = process.env.TWILIO_TO;
+
   await client.messages.create({
     body: `Tu código de verificación es: ${code}`,
-    from: "+19404617920",
-    to: "+573053721414",
+    from: fromNumber,
+    to: toNumber,
   });
 };
 
