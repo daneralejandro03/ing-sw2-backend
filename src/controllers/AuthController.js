@@ -342,18 +342,24 @@ const secondAuthenticationFactor = async (req, res) => {
   const { email, code } = req.body;
 
   if (code.length !== 6) {
-    return res.status(200).json({ success: false, message: "The code must be 6 digits long" });
+    return res
+      .status(200)
+      .json({ success: false, message: "The code must be 6 digits long" });
   }
 
   if (!email || !code) {
-    return res.status(200).json({ success: false, message: "Email and code are required" });
+    return res
+      .status(200)
+      .json({ success: false, message: "Email and code are required" });
   }
 
   try {
     const user = await prisma.users.findUnique({ where: { email } });
-    
+
     if (!user) {
-      return res.status(200).json({ success: false, message: "User not found" });
+      return res
+        .status(200)
+        .json({ success: false, message: "User not found" });
     }
 
     const now = new Date();
@@ -361,7 +367,9 @@ const secondAuthenticationFactor = async (req, res) => {
       user.twoFactorCode === code && user.twoFactorCodeExpires > now;
 
     if (!isValidCode) {
-      return res.status(200).json({ success: false, message: "Invalid or expired code" });
+      return res
+        .status(200)
+        .json({ success: false, message: "Invalid or expired code" });
     }
 
     const token = jwt.sign(
@@ -377,15 +385,16 @@ const secondAuthenticationFactor = async (req, res) => {
       user: {
         id: user.id,
         fullname: user.fullname,
-        email: user.email
+        email: user.email,
       },
     });
   } catch (error) {
     console.error("2FA verification error:", error);
-    return res.status(200).json({ success: false, message: "Internal server error" });
+    return res
+      .status(200)
+      .json({ success: false, message: "Internal server error" });
   }
 };
-
 
 module.exports = {
   signIn,
