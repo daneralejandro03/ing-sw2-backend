@@ -298,22 +298,85 @@ const signIn = async (req, res) => {
       return res.status(400).json({ message: "Password doesn't match" });
     }
 
-    const token = jwt.sign(
-      {
-        id: findUser.id,
-        email: findUser.email,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "2h" }
-    );
+    const code2FA = generateCode();
+    const expiration = new Date();
+    expiration.setMinutes(expiration.getMinutes() + 5);
 
-    res.status(200).json({
-      message: "Login successful",
-      token,
+    await prisma.users.update({
+      where: { id: findUser.id },
+      data: {
+        twoFactorCode: code2FA,
+        twoFactorCodeExpires: expiration,
+      },
     });
+
+    await sendSMS(code2FA, findUser);
+
+    return res.status(200).json({ message: "2FA code sent" });
   } catch (error) {
     res.status(500).json({ message: "Login failed", error });
   }
 };
 
-module.exports = { signIn, signUp, verifyCode, resendVerificationCode };
+function generateCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+const sendSMS = async (code, user) => {
+  const accountSid = process.env.TWILIO_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const client = require("twilio")(accountSid, authToken);
+
+  await client.messages.create({
+    body: `Tu código de verificación es: ${code}`,
+    from: "+19404617920",
+    to: "+573053721414",
+  });
+};
+
+const secondAuthenticationFactor = async (req, res) => {
+  const { email, code } = req.body;
+
+  if (code.length > 6 || code.length < 6) {
+    return res.status(400).json({ message: "The code must be 6 digits long" });
+  }
+
+  if (!email || !code) {
+    return res.status(400).json({ message: "Email and code are required" });
+  }
+
+  try {
+    const user = await prisma.users.findUnique({ where: { email } });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const now = new Date();
+    const isValidCode =
+      user.twoFactorCode === code && user.twoFactorCodeExpires > now;
+
+    if (!isValidCode) {
+      return res.status(401).json({ message: "Invalid or expired code" });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: "2h" }
+    );
+
+    return res.status(200).json({
+      message: "Login successful",
+      token,
+    });
+  } catch (error) {
+    console.error("2FA verification error:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+module.exports = {
+  signIn,
+  signUp,
+  verifyCode,
+  resendVerificationCode,
+  secondAuthenticationFactor,
+};
